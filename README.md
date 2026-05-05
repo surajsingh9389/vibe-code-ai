@@ -31,9 +31,10 @@ User Prompt
      │                  │                    │
   Produces:          Produces:           Produces:
   Plan object        TaskPlan object     index.html
-  (name, features,   (ordered impl       (complete SPA)
-   tech stack,        steps with
-   file list)         file paths)
+  (name, features,   (ordered           (complete SPA)
+   tech stack,       Implementaion
+   file list)        steps with
+                     file paths)
                                              │
                                              ▼
                                      ┌──────────────┐
