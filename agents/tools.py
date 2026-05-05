@@ -7,6 +7,13 @@ from langchain_core.tools import tool
 PROJECT_ROOT = pathlib.Path.cwd() / "generated_project"
 
 
+def set_project_root(path: str):
+    """Set the project root directory for file operations."""
+    global PROJECT_ROOT
+    PROJECT_ROOT = pathlib.Path(path)
+    PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
+
+
 def safe_path_for_project(path: str) -> pathlib.Path:
     p = (PROJECT_ROOT / path).resolve()
     if PROJECT_ROOT.resolve() not in p.parents and PROJECT_ROOT.resolve() != p.parent and PROJECT_ROOT.resolve() != p:

@@ -1,141 +1,174 @@
-import time 
-import os 
-from typing import Dict, Any
-from tenacity import retry, wait_exponential, stop_after_attempt
+from .prompts import planner_prompt, architect_prompt, coder_system_prompt
+from .states import Plan, TaskPlan
+from .tools import write_file, set_project_root
 
-from prompts import planner_prompt, architect_prompt, coder_system_prompt
-from states import Plan, TaskPlan, CoderState
-from tools import read_file, write_file, list_files, get_current_directory
-
-
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import StateGraph, START
 from langchain_groq import ChatGroq
 
 from dotenv import load_dotenv
+import pathlib
+import asyncio
+
 load_dotenv()
 
 # Initialize two different models
 
-# Fast model for planning/routing
+# 'Instant' model for the planner to save tokens/rate limits
 planner_llm = ChatGroq(model="llama-3.1-8b-instant") 
 
-# For the Coder, we bind the tools directly to the model
-coder_tools = [read_file, write_file, list_files, get_current_directory]
-coder_llm = ChatGroq(model="openai/gpt-oss-120b").bind_tools(coder_tools)
+# 'Versatile' model for the architect and coder (higher reasoning)
+architect_llm = ChatGroq(model="llama-3.3-70b-versatile")
 
-# --- RESILIENCY WRAPPER ---
-@retry(
-    wait=wait_exponential(multiplier=1, min=2, max=10), 
-    stop=stop_after_attempt(5),
-    reraise=True
-)
-def safe_llm_call(llm, messages, structured_output=None):
-    """Adds a small delay and retry logic to handle 429 errors gracefully."""
-    time.sleep(2.0) # Proactive cooldown for the TPM bucket
-    if structured_output:
-        return llm.with_structured_output(structured_output).invoke(messages)
-    return llm.invoke(messages)
+# High-capacity OSS model for the actual coding logic
+coder_llm = ChatGroq(model="openai/gpt-oss-120b")
 
 
-# --- AGENT NODES ---
-def planner_agent(state: dict) -> dict:
-    user_prompt = state['user_prompt']
-    plan_prompt = planner_prompt(user_prompt)
-    resp = safe_llm_call(planner_llm, plan_prompt, structured_output=Plan)
+
+# --- ASYNC AGENT NODES ---
+async def planner_agent(state: dict) -> dict:
+    user_prompt = state["user_prompt"]
+    plan_prompt_text = planner_prompt(user_prompt)
+    resp = await planner_llm.with_structured_output(Plan).ainvoke(plan_prompt_text)
     
     if resp is None:
         raise ValueError("Planner failed to return a valid plan.")
     
+    # Call progress callback if available
+    if state.get("on_progress"):
+        state["on_progress"]("planner", resp)
+    
     return {'plan': resp}
 
 
-def architect_agent(state: dict) -> dict:
+async def architect_agent(state: dict) -> dict:
     plan: Plan = state['plan']
     arch_prompt = architect_prompt(plan)
     
-    resp = safe_llm_call(planner_llm, arch_prompt, structured_output=TaskPlan)
+    resp = await architect_llm.with_structured_output(TaskPlan).ainvoke(arch_prompt)
     
     if resp is None:
         raise ValueError("Architect failed to return a valid task plan.")
     
+    resp.plan = plan
+    
+    # Call progress callback if available
+    if state.get("on_progress"):
+        state["on_progress"]("architect", resp)
+    
     return {'plan_architecture': resp}
 
 
-def coder_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    coder_state = state.get('coder_state')
+def clean_html(output: str) -> str:
+    output = output.strip()
+
+    # Remove markdown code fences like ```html ... ```
+    if output.startswith("```"):
+        parts = output.split("```")
+        if len(parts) >= 2:
+            output = parts[1]
+
+    return output.strip()
+
+
+def is_valid_html(html: str) -> bool:
+    html_lower = html.lower()
+    return "<html" in html_lower and "</html>" in html_lower
+
+
+async def coder_agent(state: dict) -> dict:
+    plan = state["plan_architecture"]
     
-    # Initialize state on first run
-    if coder_state is None:
-        coder_state = CoderState(task_plan=state['plan_architecture'], current_step_idx=0)
-    
-    steps = coder_state.task_plan.implementation_steps
-    
-    # Check if all tasks are finished
-    if coder_state.current_step_idx >= len(steps):
-        return { "coder_state": coder_state, "status": "DONE"}
-    
-    current_task = steps[coder_state.current_step_idx]
-    
-    existing_content = read_file.run(current_task.filepath)
-    
-    user_prompt = (
-        f"Task: {current_task.task_description}\n"
-        f"File: {current_task.filepath}\n"
-        f"Existing content:\n{existing_content}\n"
-        f"Use write_file(path, content) to save your changes"
-    )
-    
+    user_prompt = f"""
+Build a COMPLETE working web app:
+
+{plan}
+
+The app must behave like a real product, not a demo:
+- persistent data
+- full CRUD
+- proper UI feedback
+"""
+
     system_prompt = coder_system_prompt()
     
     messages = [
-        {"role": "system", "content": system_prompt}, 
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
     
-    # Invoke the model that has tools bound to it
-    response = safe_llm_call(coder_llm, messages)
+    html = ""
     
+    for _ in range(2):
+        response = await coder_llm.ainvoke(messages)
+        html = clean_html(response.content)
+
+        if is_valid_html(html):
+            break
+ 
+    if not is_valid_html(html):
+        raise ValueError("Failed to generate valid project")
+
+    write_file.run({
+        "path": "index.html",
+        "content": html
+    })
     
-    # Handle the Tool Calls manually (Token-efficient ReAct)
-    if response.tool_calls:
-        tool_map = {
-            "read_file": read_file,
-            "write_file": write_file,
-            "list_files": list_files,
-            "get_current_directory": get_current_directory
-        }
-        for tool_call in response.tool_calls:
-            # Execute the tool
-            selected_tool = tool_map[tool_call["name"]]
-            print(f"--- [TOOL] Executing {tool_call['name']} ---")
-            selected_tool.invoke(tool_call["args"])
+    # Call progress callback if available
+    if state.get("on_progress"):
+        state["on_progress"]("coder", "done")
+         
+    return {"status": "DONE", "generated_html": html}
+
+
+def build_graph():
+    """Build and compile the LangGraph agent pipeline."""
+    graph = StateGraph(dict)
+
+    graph.add_node('planner', planner_agent)
+    graph.add_node('architect', architect_agent)
+    graph.add_node('coder', coder_agent)
+
+    graph.add_edge(START, 'planner')
+    graph.add_edge('planner', 'architect')
+    graph.add_edge('architect', 'coder')
+
+    return graph.compile()
+
+
+async def run_agent_async(user_prompt: str, project_dir: str = None, on_progress=None):
+    """
+    Run the full agent pipeline asynchronously and return the result.
     
-    coder_state.current_step_idx +=1
+    Args:
+        user_prompt: The user's project description
+        project_dir: Optional directory to save generated files
+        on_progress: Optional callback fn(stage, data) for progress updates
     
-    return {"coder_state": coder_state}
-
-graph = StateGraph(dict)
-
-
-graph.add_node('planner', planner_agent)
-graph.add_node('architect', architect_agent)
-graph.add_node('coder', coder_agent)
-
-graph.add_edge(START, 'planner')
-graph.add_edge('planner', 'architect')
-graph.add_edge('architect', 'coder')
-graph.add_conditional_edges(
-    "coder",
-    lambda s: "END" if s.get('status') == "DONE" else "coder",
-    {"END": END, "coder": "coder"}
-)
-
-agent = graph.compile()
+    Returns:
+        dict with the agent result including generated HTML
+    """
+    if project_dir:
+        set_project_root(project_dir)
+    
+    agent = build_graph()
+    
+    result = await agent.ainvoke(
+        {
+            'user_prompt': user_prompt,
+            'on_progress': on_progress,
+        },
+        {"recursion_limit": 50}
+    )
+    return result
 
 
-# --- EXECUTION ---
+def run_agent(user_prompt: str, project_dir: str = None, on_progress=None):
+    """Sync wrapper around run_agent_async for backwards compatibility."""
+    return asyncio.run(run_agent_async(user_prompt, project_dir, on_progress))
+
+
+# Allow running directly for testing
 if __name__ == "__main__":
-    user_prompt = "create a simple calculator web app"
-    # recursion_limit higher than the number of files expected
-    resp = agent.invoke({'user_prompt': user_prompt}, {"recursion_limit": 50})
+    user_prompt = "Create a expense tracker app"
+    resp = run_agent(user_prompt)
     print("\nProject generated successfully.")
