@@ -699,6 +699,7 @@ dependencies = [
     { name = "pip" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "tenacity" },
 ]
 
 [package.metadata]
@@ -711,6 +712,7 @@ requires-dist = [
     { name = "pip", specifier = ">=26.1.1" },
     { name = "pydantic", specifier = ">=2.13.3" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 
 [[package]]
