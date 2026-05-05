@@ -8,6 +8,25 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 import pathlib
 import asyncio
+import httpx
+
+
+class RateLimitError(Exception):
+    """Raised when the LLM API hits a rate or token limit."""
+    pass
+
+
+def _check_rate_limit(exc: Exception):
+    """Inspect an exception and raise RateLimitError if it's a 429 / rate-limit issue."""
+    msg = str(exc).lower()
+    rate_keywords = ["rate_limit", "rate limit", "429", "too many requests",
+                     "token limit", "tokens per minute", "requests per minute",
+                     "quota exceeded", "resource_exhausted"]
+    if any(kw in msg for kw in rate_keywords):
+        raise RateLimitError(
+            "⚠️ Agent rate limit exceeded"
+            "Please try again Sometime later."
+        ) from exc
 
 load_dotenv()
 
@@ -28,7 +47,12 @@ coder_llm = ChatGroq(model="openai/gpt-oss-120b")
 async def planner_agent(state: dict) -> dict:
     user_prompt = state["user_prompt"]
     plan_prompt_text = planner_prompt(user_prompt)
-    resp = await planner_llm.with_structured_output(Plan).ainvoke(plan_prompt_text)
+    
+    try:
+        resp = await planner_llm.with_structured_output(Plan).ainvoke(plan_prompt_text)
+    except Exception as exc:
+        _check_rate_limit(exc)
+        raise
     
     if resp is None:
         raise ValueError("Planner failed to return a valid plan.")
@@ -44,7 +68,11 @@ async def architect_agent(state: dict) -> dict:
     plan: Plan = state['plan']
     arch_prompt = architect_prompt(plan)
     
-    resp = await architect_llm.with_structured_output(TaskPlan).ainvoke(arch_prompt)
+    try:
+        resp = await architect_llm.with_structured_output(TaskPlan).ainvoke(arch_prompt)
+    except Exception as exc:
+        _check_rate_limit(exc)
+        raise
     
     if resp is None:
         raise ValueError("Architect failed to return a valid task plan.")
@@ -99,7 +127,11 @@ The app must behave like a real product, not a demo:
     html = ""
     
     for _ in range(2):
-        response = await coder_llm.ainvoke(messages)
+        try:
+            response = await coder_llm.ainvoke(messages)
+        except Exception as exc:
+            _check_rate_limit(exc)
+            raise
         html = clean_html(response.content)
 
         if is_valid_html(html):

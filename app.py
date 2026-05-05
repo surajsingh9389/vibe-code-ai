@@ -12,7 +12,7 @@ import sys
 # Add project root to path
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
-from agents.graph import run_agent_async
+from agents.graph import run_agent_async, RateLimitError
 from agents.tools import set_project_root
 
 # ─── Page Config ─────────────────────────────────────────────────────────────────
@@ -164,12 +164,13 @@ st.markdown("""
 
     /* ── Tabs ─────────────────────────────────────── */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0; background: #161625;
-        border-radius: 10px; padding: 3px;
+        gap: 8px; background: #161625;
+        border-radius: 10px; padding: 4px 6px;
         border: 1px solid #2a2a40;
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 7px; color: #94a3b8; font-weight: 600;
+        padding: 8px 18px !important;
     }
     .stTabs [aria-selected="true"] {
         background: rgba(124,58,237,0.15) !important;
@@ -463,13 +464,21 @@ else:
                 time.sleep(0.5)
                 st.rerun()
 
+            except RateLimitError as e:
+                st.session_state.generating = False
+                st.session_state.error = str(e)
+                st.warning(f"🚦 {e}")
+
             except Exception as e:
                 st.session_state.generating = False
                 st.session_state.error = str(e)
-                st.error(f" Generation failed: {e}")
+                st.error(f"❌ Generation failed: {e}")
 
     elif generate_clicked and (not user_prompt or not user_prompt.strip()):
         st.warning(" Please describe the app you want to build.")
 
     if st.session_state.error and not st.session_state.generating:
-        st.error(f" {st.session_state.error}")
+        if "rate limit" in st.session_state.error.lower():
+            st.warning(f"🚦 {st.session_state.error}")
+        else:
+            st.error(f"❌ {st.session_state.error}")
