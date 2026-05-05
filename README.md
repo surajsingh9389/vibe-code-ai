@@ -64,9 +64,9 @@ START ──▶ planner ──▶ architect ──▶ coder ──▶ END
 
 | Layer | Technology |
 |---|---|
-| **Agent framework** | [LangGraph](https://github.com/langchain-ai/langgraph) |
+| **Agent framework** | LangGraph, Langchain |
 | **LLM provider** | [Groq](https://groq.com) (via `langchain-groq`) |
-| **Models** | `llama-3.1-8b-instant` (planner & architect), `openai/gpt-oss-120b` (coder) |
+| **Models** | `llama-3.1-8b-instant` (planner), `llama-3.3-70b-versatile` (architect), `openai/gpt-oss-120b` (coder) |
 | **Data validation** | [Pydantic](https://docs.pydantic.dev) |
 | **Frontend UI** | [Streamlit](https://streamlit.io) |
 | **Generated apps** | HTML5 + [Tailwind CSS](https://tailwindcss.com) (CDN) + Vanilla JS |
@@ -147,6 +147,3 @@ vibe-code-ai/
 
 ---
 
-## 📄 License
-
-MIT
