@@ -1,0 +1,45 @@
+# --- Environment & API Keys (CRITICAL for AI projects) ---
+.env
+.env.local
+.env.*
+secrets.json
+keys/
+*.pem
+
+# --- Python & Virtual Environments ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# --- Vector Databases & Local AI Storage ---
+# Prevents committing large local databases like ChromaDB or FAISS
+data/
+db/
+*.db
+.chroma/
+vector_store/
+embeddings/
+
+# --- Agent Logs & Tracing ---
+# Ignore large log files from LangChain, CrewAI, or custom agents
+logs/
+*.log
+.langchain/
+.agent_traces/
+
+# --- IDE & AI Code Editor Settings ---
+.vscode/
+.idea/
+.cursorrules
+.aiexclude
+.cursorignore
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
